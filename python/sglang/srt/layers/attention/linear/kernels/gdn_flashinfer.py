@@ -233,38 +233,23 @@ class FlashInferGDNKernel(LinearAttnKernelBase):
         a_fi = a.view(batch_size, 1, num_v_heads)
         b_fi = b.view(batch_size, 1, num_v_heads)
 
-        if self.use_state_pool:
-            output_fi, _ = self._decode_fn(
-                q=query_fi,
-                k=key_fi,
-                v=value_fi,
-                state=None,
-                A_log=A_log.detach().float(),
-                a=a_fi,
-                dt_bias=dt_bias.detach(),
-                b=b_fi,
-                use_qk_l2norm=True,
-                initial_state=ssm_states,
-                initial_state_indices=cache_indices,
-            )
-        else:
-            # TODO: Once FlashInfer PR#2521 is merged for SM90, gather/scatter
-            # will no longer be needed here.
-            state_batch = ssm_states[cache_indices]
-            output_fi, new_state = self._decode_fn(
-                q=query_fi,
-                k=key_fi,
-                v=value_fi,
-                state=state_batch,
-                A_log=A_log.detach(),
-                a=a_fi,
-                dt_bias=dt_bias.detach(),
-                b=b_fi,
-                scale=None,
-                output=None,
-                use_qk_l2norm=True,
-            )
-            ssm_states[cache_indices] = new_state
+        state_batch = ssm_states[cache_indices]
+        # TODO: Once FlashInfer PR#2521 is merged, gather/scatter
+        # will no longer be needed here for SM90/SM100.
+        output_fi, new_state = self._decode_fn(
+            q=query_fi,
+            k=key_fi,
+            v=value_fi,
+            state=state_batch,
+            A_log=A_log.detach().float() if self.use_state_pool else A_log.detach(),
+            a=a_fi,
+            dt_bias=dt_bias.detach(),
+            b=b_fi,
+            scale=None,
+            output=None,
+            use_qk_l2norm=True,
+        )
+        ssm_states[cache_indices] = new_state
 
         return output_fi.view(1, batch_size, num_v_heads, head_v_dim)
 
