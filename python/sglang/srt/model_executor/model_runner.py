@@ -1007,6 +1007,7 @@ class ModelRunner:
 
     def load_model(self):
         tic_total = time.perf_counter()
+        tic_config = time.perf_counter()
         before_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         logger.info(
             f"Load weight begin. avail mem={get_available_gpu_memory(self.device, self.gpu_id):.2f} GB"
@@ -1049,7 +1050,10 @@ class ModelRunner:
         maybe_trigger_remote_instance_nccl_send_group(
             server_args=self.server_args, tp_rank=self.ps.tp_rank
         )
+        time_config = time.perf_counter() - tic_config
 
+
+        tic_load_weight = time.perf_counter()
         loaded = load_model_with_memory_saver(
             server_args=self.server_args,
             model_config=self.model_config,
@@ -1059,6 +1063,9 @@ class ModelRunner:
             memory_saver_adapter=self.memory_saver_adapter,
             is_draft_worker=self.is_draft_worker,
         )
+        time_load_weight = time.perf_counter() - tic_load_weight
+        
+        tic_post_load = time.perf_counter()
         self.loader = loaded.loader
         self.model = loaded.model
         if loaded.remote_instance_weight_info is not None:
@@ -1092,18 +1099,24 @@ class ModelRunner:
         after_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         self.weight_load_mem_usage = before_avail_memory - after_avail_memory
         self.weight_load_time = time.perf_counter() - tic_total
+        time_post_load = time.perf_counter() - tic_post_load
+        
         # Get quantization config from ModelConfig
         # This handles both config.json (standard) and hf_quant_config.json (ModelOpt)
         quant_str = self.model_config.get_quantization_config_log_str()
 
         logger.info(
             f"Load weight end. "
-            f"elapsed={self.weight_load_time:.2f} s, "
             f"type={type(self.model).__name__}, "
-            f"{quant_str + ', ' if quant_str else ''}"
+            f"dtype={self.dtype}, "
+            f"quant={quant_str}, "
             f"avail mem={after_avail_memory:.2f} GB, "
-            f"mem usage={self.weight_load_mem_usage:.2f} GB."
+            f"time={self.weight_load_time:.2f} s. "
+            f"(Config parsing: {time_config:.2f} s, "
+            f"Weight loading: {time_load_weight:.2f} s, "
+            f"Post-load config: {time_post_load:.2f} s)"
         )
+
 
         report_online_quantization(model=self.model, server_args=self.server_args)
 
